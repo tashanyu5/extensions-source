@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.Rect
 import android.util.Base64
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -16,7 +15,6 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import keiyoushi.annotation.Source
 import keiyoushi.utils.asJsoup
-import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
@@ -26,7 +24,6 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.security.KeyPair
 
 @Source
 abstract class MangaToshokanZ : HttpSource() {
@@ -34,15 +31,11 @@ abstract class MangaToshokanZ : HttpSource() {
 
     override val client = network.client.newBuilder()
         .addNetworkInterceptor(::r18Interceptor)
-        .addInterceptor(::fallbackInterceptor)
         .addInterceptor(::imageIntercept)
         .build()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
-        .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-        .set("Accept-Language", "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7")
-        .set("Referer", "$baseUrl/")
+        .set("cookie", "_LANG_=ja")
 
     private var isR18 = false
 
@@ -64,68 +57,6 @@ abstract class MangaToshokanZ : HttpSource() {
         }
 
         return chain.proceed(request)
-    }
-
-    private fun fallbackInterceptor(chain: Interceptor.Chain): Response {
-        val request = chain.request()
-        val response = chain.proceed(request)
-
-        if (response.code == 500 && request.url.encodedPath.contains("/series/detail/")) {
-            response.close()
-            val fallbackUrl = request.url.newBuilder()
-                .encodedPath(request.url.encodedPath.replace("/series/detail/", "/book/detail/"))
-                .build()
-            return chain.proceed(request.newBuilder().url(fallbackUrl).build())
-        }
-
-        return response
-    }
-
-    private fun imageIntercept(chain: Interceptor.Chain): Response {
-        val request = chain.request()
-        val response = chain.proceed(request)
-        val url = request.url.toString()
-
-        if (!url.contains("#scramble_")) return response
-        val fragment = request.url.fragment ?: return response
-        if (!fragment.startsWith("scramble_")) return response
-
-        val cropsJsonStr = String(Base64.decode(fragment.substringAfter("scramble_"), Base64.URL_SAFE))
-        val scrambleObj = JSONObject(cropsJsonStr)
-        val targetW = scrambleObj.getInt("w")
-        val targetH = scrambleObj.getInt("h")
-        val cropsArray = scrambleObj.getJSONArray("crops")
-
-        val srcStream = response.body.byteStream()
-        val srcBitmap = BitmapFactory.decodeStream(srcStream) ?: return response
-        response.close()
-
-        val resultBitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(resultBitmap)
-
-        for (i in 0 until cropsArray.length()) {
-            val crop = cropsArray.getJSONObject(i)
-            val destX = crop.getInt("x")
-            val destY = crop.getInt("y")
-            val srcX = crop.getInt("x2")
-            val srcY = crop.getInt("y2")
-            val w = crop.getInt("w")
-            val h = crop.getInt("h")
-
-            // 关键修正：x2/y2 才是下载下来的乱序长条图里的坐标（源），
-            // x/y 才是最终页面画布上的坐标（目标）——跟之前两版刚好相反
-            val srcRect = Rect(srcX, srcY, srcX + w, srcY + h)
-            val destRect = Rect(destX, destY, destX + w, destY + h)
-            canvas.drawBitmap(srcBitmap, srcRect, destRect, null)
-        }
-
-        val output = ByteArrayOutputStream()
-        resultBitmap.compress(Bitmap.CompressFormat.JPEG, 100, output)
-        val responseBody = output.toByteArray().toResponseBody("image/jpeg".toMediaType())
-
-        return response.newBuilder()
-            .body(responseBody)
-            .build()
     }
 
     override fun popularMangaRequest(page: Int) = GET("$baseUrl/ranking/views", headers)
@@ -175,9 +106,11 @@ abstract class MangaToshokanZ : HttpSource() {
                         url.host("r18.mangaz.com")
                     }
                 }
+
                 is Sort -> {
                     url.addQueryParameter("sort", sortBy[filter.state].lowercase())
                 }
+
                 else -> {}
             }
         }
@@ -187,6 +120,12 @@ abstract class MangaToshokanZ : HttpSource() {
 
     override fun searchMangaParse(response: Response) = latestUpdatesParse(response)
 
+    // ------------------------------------------------------------------
+    // Listing pages (popular / latest / search) share this parser.
+    // Note: the site now emits ABSOLUTE hrefs (https://www.mangaz.com/series/detail/101)
+    // instead of relative ones, so we normalize down to the bare numeric id here
+    // and keep everything downstream (manga.url) working with just that id.
+    // ------------------------------------------------------------------
     private fun Response.toMangas(selector: String): List<SManga> {
         val document = asJsoup()
         val container = document.selectFirst(selector) ?: document.body() ?: return emptyList()
@@ -199,6 +138,8 @@ abstract class MangaToshokanZ : HttpSource() {
                 img.attr("data-src")
             }
 
+            // Prefer the text title link; some listing layouts also have a cover <a>
+            // whose text is just the ranking number, so we fall back carefully.
             val titleA = li.selectFirst(".listBoxDetail h4 a")
                 ?: li.selectFirst("h4 a")
                 ?: li.selectFirst(".listBoxDetail a")
@@ -214,6 +155,7 @@ abstract class MangaToshokanZ : HttpSource() {
                 ?: li.selectFirst("a[href*='/detail/']")?.attr("href")
                 ?: return@mapNotNull null
 
+            // href may be absolute or relative - only the trailing numeric id matters.
             val id = href.substringAfterLast("/").ifBlank { return@mapNotNull null }
 
             SManga.create().apply {
@@ -230,6 +172,12 @@ abstract class MangaToshokanZ : HttpSource() {
 
     private class Sort : Filter.Select<String>("Sort", sortBy)
 
+    // ------------------------------------------------------------------
+    // Manga details + chapter list
+    // Post-relaunch, the site keeps everything (title, author, description,
+    // and the full volume list) on a single series/detail/{id} page, so both
+    // requests below hit the same URL.
+    // ------------------------------------------------------------------
     private fun seriesDetailRequest(seriesId: String): Request {
         val url = baseUrl.toHttpUrl().newBuilder()
             .addPathSegments("series/detail")
@@ -253,9 +201,11 @@ abstract class MangaToshokanZ : HttpSource() {
                     label.contains("者") || label.contains("原作") -> {
                         author = if (author.isNullOrEmpty()) name else "$author, $name"
                     }
+
                     label.contains("作画") || label.contains("マンガ") -> {
                         artist = if (artist.isNullOrEmpty()) name else "$artist, $name"
                     }
+
                     else -> {
                         if (author.isNullOrEmpty()) author = name
                     }
@@ -272,6 +222,8 @@ abstract class MangaToshokanZ : HttpSource() {
     override fun chapterListParse(response: Response): List<SChapter> {
         val document = response.asJsoup()
 
+        // Defensive fallback for the (currently unobserved) case of a manga
+        // living directly under /book/detail/ with no series page at all.
         if (response.request.url.pathSegments.firstOrNull() == "book") {
             return listOf(
                 SChapter.create().apply {
@@ -285,6 +237,7 @@ abstract class MangaToshokanZ : HttpSource() {
             )
         }
 
+        // Each volume in the series page is a <li class="item series_sort"> entry.
         return document.select(".itemList li").reversed().mapIndexedNotNull { i, li ->
             val a = li.selectFirst("a") ?: return@mapIndexedNotNull null
             val chapterTitle = li.selectFirst(".title")?.text()?.ifBlank { null } ?: a.text().trim()
@@ -298,30 +251,24 @@ abstract class MangaToshokanZ : HttpSource() {
         }.reversed()
     }
 
+    // ------------------------------------------------------------------
+    // Reader
+    // The old RSA/AES + ticket + POST /virgo/docx/{id}.json flow is gone.
+    // The new viewer page (GET /virgo/view/{id}/i:0) embeds a plain
+    // base64-encoded JSON blob (id="doc") directly in the HTML, containing
+    // the page order and, per page, a jigsaw "scramble" descriptor that
+    // must be reassembled client-side (anti-scraping measure).
+    // ------------------------------------------------------------------
     override fun pageListRequest(chapter: SChapter): Request {
         val viewerUrl = "https://vw.mangaz.com/virgo/view/${chapter.url}/i:0"
         return GET(viewerUrl, headers)
     }
 
     override fun pageListParse(response: Response): List<Page> {
-        val html = response.body.string()
-        var jsonString: String? = null
-
-        val base64Regex = Regex("""([A-Za-z0-9+/]{200,}={0,2})""")
-        for (match in base64Regex.findAll(html)) {
-            try {
-                val decoded = String(Base64.decode(match.value, Base64.DEFAULT))
-                if (decoded.contains("\"Orders\"") && decoded.contains("\"Location\"")) {
-                    jsonString = decoded
-                    break
-                }
-            } catch (e: Exception) {
-            }
-        }
-
-        if (jsonString.isNullOrBlank()) {
-            throw Exception("无法在阅读器页面中找到打乱的 Base64 数据")
-        }
+        val document = response.asJsoup()
+        val jsonString = document.selectFirst("#doc")?.text()
+            ?.let { String(Base64.decode(it, Base64.DEFAULT)) }
+            ?: throw Exception("無法在阅读器頁面中找到 #doc 数据")
 
         val data = JSONObject(jsonString)
         val location = data.getJSONObject("Location")
@@ -339,6 +286,9 @@ abstract class MangaToshokanZ : HttpSource() {
             var imageUrl = "$base$scrambleDir$name"
 
             if (scramble != null) {
+                // Pass the crop/reassembly instructions to the image interceptor
+                // via the URL fragment - okhttp keeps fragments untouched on the
+                // wire, so the server never sees this part of the URL.
                 val scrambleB64 = Base64.encodeToString(scramble.toString().toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)
                 imageUrl += "#scramble_$scrambleB64"
             }
@@ -349,14 +299,77 @@ abstract class MangaToshokanZ : HttpSource() {
         return pages
     }
 
+    // ------------------------------------------------------------------
+    // Reassembles the jigsaw-scrambled page image.
+    //
+    // Each downloaded image is actually a flattened horizontal filmstrip
+    // containing all the tiles for one page, concatenated side by side.
+    // The per-tile crop descriptor gives:
+    //   x, y   -> the tile's DESTINATION position in the final page canvas
+    //   x2, y2 -> the tile's SOURCE position in the downloaded filmstrip
+    //              (y2 is always 0, since the filmstrip is a single row)
+    //   w, h   -> the tile's size (same for both source and destination -
+    //              tiles are only repositioned, never resized)
+    // ------------------------------------------------------------------
+    private fun imageIntercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val response = chain.proceed(request)
+        val url = request.url.toString()
+
+        if (!url.contains("#scramble_")) return response
+        val fragment = request.url.fragment ?: return response
+        if (!fragment.startsWith("scramble_")) return response
+
+        val cropsJsonStr = String(Base64.decode(fragment.substringAfter("scramble_"), Base64.URL_SAFE))
+        val scrambleObj = JSONObject(cropsJsonStr)
+        val targetW = scrambleObj.getInt("w")
+        val targetH = scrambleObj.getInt("h")
+        val cropsArray = scrambleObj.getJSONArray("crops")
+
+        val srcStream = response.body.byteStream()
+        val srcBitmap = BitmapFactory.decodeStream(srcStream) ?: return response
+        response.close()
+
+        val resultBitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(resultBitmap)
+
+        for (i in 0 until cropsArray.length()) {
+            val crop = cropsArray.getJSONObject(i)
+            val destX = crop.getInt("x")
+            val destY = crop.getInt("y")
+            val srcX = crop.getInt("x2")
+            val srcY = crop.getInt("y2")
+            val w = crop.getInt("w")
+            val h = crop.getInt("h")
+
+            val srcRect = Rect(srcX, srcY, srcX + w, srcY + h)
+            val destRect = Rect(destX, destY, destX + w, destY + h)
+            canvas.drawBitmap(srcBitmap, srcRect, destRect, null)
+        }
+
+        val output = ByteArrayOutputStream()
+        resultBitmap.compress(Bitmap.CompressFormat.JPEG, 100, output)
+        val responseBody = output.toByteArray().toResponseBody("image/jpeg".toMediaType())
+
+        return response.newBuilder()
+            .body(responseBody)
+            .build()
+    }
+
     override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
 
     companion object {
         private val categories = arrayOf(
-            "All", "Mens", "Womens", "TL", "BL", "R18",
+            "All",
+            "Mens",
+            "Womens",
+            "TL",
+            "BL",
+            "R18",
         )
         private val sortBy = arrayOf(
-            "Popular", "New",
+            "Popular",
+            "New",
         )
     }
 }
