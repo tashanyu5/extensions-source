@@ -1,3 +1,6 @@
+注：本分支仅作本人修复MangatoshokanZ扩展源使用
+Note: This branch is solely intended for personal use to fix the MangaToshokanZ extension.
+
 # Keiyoushi Extensions
 
 ### Please give the repo a :star:
