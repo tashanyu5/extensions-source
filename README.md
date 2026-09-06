@@ -1,4 +1,5 @@
 注：本分支仅作本人修复MangatoshokanZ扩展源使用,如官方主分支有修复，请告知我
+
 Note: This branch is solely for my personal fix of the MangaToshokanZ extension. If an official fix is merged or released in the main branch, please let me know.
 
 # Keiyoushi Extensions
