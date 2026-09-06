@@ -5,17 +5,17 @@ Note: This branch is solely for my personal fix of the MangaToshokanZ extension.
 ⚠️ 重要提示 / Important Notice
 
 中文：
-本仓库提供的是非官方修复版本，仅供个人测试使用，与官方 keiyoushi 仓库的签名不一致。
+本仓库提供的是非官方修复版本，仅供个人测试使用。
 
-如果你之前已经安装过官方版本的 MangaToshokanZ 扩展，请先卸载官方版本，再安装本仓库编译的版本，否则会因签名不一致导致安装失败。
-如果未来官方仓库合并了这个修复并发布了官方更新，请先卸载本仓库的这个非官方版本，再安装/更新官方版本，同样是因为签名冲突，不能直接覆盖安装。
+如果你之前已经安装过官方版本的 MangaToshokanZ 扩展，安装本仓库编译的版本前，建议先卸载官方版本，以避免可能出现的签名冲突导致安装失败（实际测试中直接覆盖安装通常没有问题，但不同设备/系统版本表现可能不同）。
+如果未来官方仓库合并了这个修复并发布了官方更新，同样建议先卸载本仓库的这个非官方版本，再安装/更新官方版本，原因同上。
 本修复未经官方审核，使用风险自行承担；如遇问题欢迎反馈，但不保证及时维护。
 
 English:
-This repository provides an unofficial fix, intended for personal testing only. It is signed differently from the official keiyoushi repository.
+This repository provides an unofficial fix, intended for personal testing only.
 
-If you already have the official MangaToshokanZ extension installed, please uninstall the official version first before installing this build — otherwise installation will fail due to a signature mismatch.
-If the official repository merges this fix and releases an official update in the future, please uninstall this unofficial version first before installing/updating to the official one, for the same signature-mismatch reason.
+If you already have the official MangaToshokanZ extension installed, it's recommended to uninstall the official version first before installing this build, to avoid a possible signature conflict that could cause installation to fail (in practice, installing directly over the official version has generally worked fine, but results may vary by device/OS version).
+If the official repository merges this fix and releases an official update in the future, it's likewise recommended to uninstall this unofficial version first before installing/updating to the official one, for the same reason.
 This fix has not been reviewed by the official maintainers. Use at your own risk. Feedback is welcome, but there's no guarantee of ongoing maintenance.
 
 # Keiyoushi Extensions
